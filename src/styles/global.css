@@ -1,0 +1,17 @@
+/* C 端商城全局样式：浅色电商风格 */
+:root {
+  --mall-primary: #e93b3d;
+  --mall-text: #303133;
+  --mall-sub: #909399;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--mall-text);
+  background: #f5f5f5;
+}
+a { text-decoration: none; color: inherit; }
+.container { width: 1200px; max-width: 96%; margin: 0 auto; }
+.price { color: var(--mall-primary); font-weight: 600; }
+.card-hover { transition: transform .2s, box-shadow .2s; }
+.card-hover:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,.09); }
