@@ -202,7 +202,9 @@ async function buy(p: any) {
   // 随后 cart.refresh() 更新角标，再从购物车里找回刚加的那条带去确认订单页；
   // 秒杀价只是加购快照，最终实付以后端促销计算为准
   const detail = await productApi.detail(p.id)
-  const skus: any[] = detail.data.skuStockList || []
+  // request.ts 的响应拦截器已经把 CommonResult.data 拆开，这里拿到的 detail 就是商品详情本体，
+  // 不能再写 detail.data.skuStockList（那样会得到 undefined 导致抢购报错）
+  const skus: any[] = detail.skuStockList || []
   if (!skus.length) {
     ElMessage.error('商品暂无可售库存')
     return
