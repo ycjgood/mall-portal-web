@@ -69,6 +69,35 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * 【模块职责】限时秒杀专区页：按场次（比如 10 点场、12 点场）展示秒杀商品、倒计时、秒杀价和剩余库存，
+ * 抢购中的场次才能点立即抢购。类比：像超市限时特卖，分几个时段开门，到点才能抢，过了点就收摊。
+ *
+ * 【输入】无路由参数；用户操作：切换场次 tab、点立即抢购、点商品图或名称看详情。
+ *         依赖后端 /seckill/sessions 返回的场次与商品数据。
+ * 【输出】渲染场次 tab、倒计时、商品网格；抢购时调 /product/detail/:id、/cart/add、/cart/list，
+ *         把秒杀商品加入购物车后直接跳确认订单页；改动的是购物车与 sessionStorage，并不直接生成订单。
+ * 【执行流程】
+ *   1) onMounted 调 seckillApi.sessions() 拿到活动与场次列表，写进 result。
+ *   2) markPhases() 用当前时间给每个场次算出三种状态：已结束 ended、抢购中 going、即将开始 upcoming，
+ *      并默认选中正在抢的那一场（没有就选最近快开始的一场）。
+ *   3) updateClock() 每秒跑一次：刷新页面上的当前时间，并算出距本场结束或下场开始还剩多少时分秒。
+ *   4) 用户点立即抢购：未登录先跳登录；已登录则取该商品默认规格加购（价格用秒杀价），
+ *      再从购物车里找到刚加的那条，把它的 id 存进 mall_cart_ids，跳确认订单页继续下单。
+ *   5) 离开页面时 onBeforeUnmount 清掉定时器，避免后台还在空跑。
+ * 【关键变量/状态】
+ *   - result：整场秒杀活动数据（promotionId、promotionTitle、sessions 场次数组）。
+ *   - activeIndex / activeSession：当前选中的第几个场次、以及该场次对象（computed）。
+ *   - countdownText / nowText：格式化后的倒计时文本与当前时间文本。
+ *   - timer：每秒执行一次的定时器 id。
+ * 【注意事项】
+ *   1. 场次时间是 HH:mm:ss 字符串（如 10:00:00），不是时间戳；要先按冒号拆成时分秒，
+ *      再换算成当天第几秒才能和当前时间比大小，直接比字符串会出错。
+ *   2. 只有 phase 为 going 且剩余库存大于 0 时抢购按钮才可点；前端只拦一道，真正的防超卖靠后端 Redis 预扣库存，
+ *      压测 306 并发抢 10 件库存零超卖，P90 从 184ms 降到 44ms。
+ *   3. 倒计时跨过场次边界（剩余秒数小于等于 0）时会重新跑 markPhases()，让抢购中自动切换成已结束或即将开始。
+ *   4. 秒杀价只用于加购展示，最终实付以后端确认单 calcAmount 为准；下单仍走 X-Order-Token 幂等流程。
+ */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -111,6 +140,10 @@ function discount(p: any) {
 /** 按当前时间给每个场次打 phase 标记并排序：进行中 > 即将开始 > 已结束 */
 function markPhases() {
   const now = new Date()
+  // 秒杀场次的时间是 HH:mm:ss 字符串（不是时间戳），没法直接比大小。
+  // 所以统一换算成今天是第几秒：时×3600 + 分×60 + 秒，之后三个状态就只是比数字大小了：
+  // 当前秒数 >= 结束秒数 → 已结束 ended；>= 开始秒数 → 抢购中 going；否则 → 即将开始 upcoming。
+  // 下面每个场次也用同样办法把 startTimeStr、endTimeStr 拆开换算成 startSec、endSec
   const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()
   for (const s of result.value.sessions) {
     const [sh, sm, ss] = s.startTimeStr.split(':').map(Number)
@@ -129,6 +162,9 @@ function markPhases() {
   }
 }
 
+// 每秒跑一次的时钟：先更新页面右上角当前时间，再算倒计时。
+// 抢购中的场次算到结束还剩多久，即将开始的算到开始还剩多久，已结束的不显示倒计时；
+// 如果剩余秒数小于等于 0，说明刚好跨过时间点，就重新跑 markPhases() 让场次状态自动切换
 function updateClock() {
   const n = new Date()
   nowText.value = n.toLocaleTimeString('zh-CN', { hour12: false })
@@ -151,6 +187,9 @@ function updateClock() {
   countdownText.value = `${pad(h)} : ${pad(m)} : ${pad(sec)}`
 }
 
+// 抢购：未登录先跳登录；已登录则按秒杀价把商品加进购物车，再跳确认订单页。
+// 注意这里不直接生成订单，秒杀价只是加购时记的快照，最终金额以后端确认单为准，
+// 防超卖与幂等都在提交订单那一侧兜底
 async function buy(p: any) {
   if (!user.isLogin) {
     router.push({ path: '/login', query: { redirect: '/seckill' } })
@@ -158,12 +197,18 @@ async function buy(p: any) {
   }
   // 秒杀商品走购物车快照流程：取默认 SKU 加购后直接进结算，
   // 最终价格以后端促销计算为准（防超卖与幂等在订单提交侧兜底）
+  // GET /product/detail/:id：秒杀商品也要先查详情拿到可售 SKU 列表，因为加购必须带 productSkuId。
+  // 取第一个 SKU，以秒杀价 flashPromotionPrice 调 /cart/add 加购（同样要带商品名、图片、规格这些快照），
+  // 随后 cart.refresh() 更新角标，再从购物车里找回刚加的那条带去确认订单页；
+  // 秒杀价只是加购快照，最终实付以后端促销计算为准
   const detail = await productApi.detail(p.id)
   const skus: any[] = detail.data.skuStockList || []
   if (!skus.length) {
     ElMessage.error('商品暂无可售库存')
     return
   }
+  // POST /cart/add：以秒杀价加购，并把商品名、图片、规格（秒杀专价）这些快照一起带上，
+  // 后端不会回查商品表；数量固定 1 件，限购由后端库存与促销规则兜底
   await cartApi.add({
     productId: p.id,
     productSkuId: skus[0].id,
@@ -191,10 +236,14 @@ function goDetail(p: any) {
 }
 
 onMounted(async () => {
+  // GET /seckill/sessions：拿秒杀活动和场次列表（场次时间是 HH:mm:ss 字符串）。
+  // 拿到后立刻 markPhases() 算各场次状态、updateClock() 起倒计时，最后开定时器每秒刷新
   const res = await seckillApi.sessions()
   result.value = res.data
   markPhases()
   updateClock()
+  // 每 1000 毫秒（1 秒）跑一次 updateClock，倒计时才会动；
+  // 定时器 id 存进 timer，离开页面时由 onBeforeUnmount 清掉，避免后台空跑
   timer = window.setInterval(updateClock, 1000)
   loaded.value = true
 })

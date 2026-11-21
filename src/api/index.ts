@@ -1,8 +1,27 @@
+/**
+ * 【模块职责】后端接口的通讯录。把一个个网址（/sso/login、/cart/add 等）收拢成好记的方法，
+ * 页面里写 memberApi.login(...) 就行，不用到处拼字符串。类比：像电话簿，找人不用背号码。
+ *
+ * 【输入】各方法需要的业务参数：账号密码、商品 id、购物车 id 数组、分页页码、下单参数等。
+ * 【输出】全部返回 Promise，兑现后是后端 CommonResult 里的 data（已由 request.ts 解包）。
+ * 【执行流程】1) 页面调用某个 xxxApi.yyy() 2) 这里拼好 url、params、headers 交给 request 3) 拦截器统一处理后把数据交回页面。
+ * 【关键变量/状态】
+ *   - memberApi / homeApi / seckillApi / productApi / cartApi / orderApi / addressApi：按后端 Controller 分好的七组接口。
+ *   - SeckillSessionDetail：秒杀场次的数据类型，注意场次时间是 HH:mm:ss 字符串，不是时间戳。
+ *   - request：底层收发室，见 request.ts。
+ * 【注意事项】
+ *   1. 登录、注册等 /sso 接口把参数放在 URL 查询串（params）里，而不是请求体；这是后端 mall-portal 的约定，别改成 body。
+ *   2. 加购 /cart/add 必须带商品快照（名称、图片、价格、规格），后端不会回查商品表。
+ *   3. 下单要两步：先 GET /order/token 拿一次性令牌，再 POST /order/generateOrder 时把令牌放进 X-Order-Token 头，防止重复下单。
+ *   4. 购物车批量接口（list/promotion、delete）的 id 数组要用逗号拼成字符串传，不是直接发 JSON 数组。
+ */
 // 各模块接口定义：与 mall-portal 的 Controller 一一对应
 import request from './request'
 
 // ---------- 会员 /sso ----------
 export const memberApi = {
+  // POST /sso/login：账号密码走 URL 查询串（params）而不是请求体，这是后端 mall-portal 的规定；
+  // 成功后返回 { token, tokenHead }，由 user 仓库保存
   login: (username: string, password: string) =>
     request.post('/sso/login', null, { params: { username, password } }),
   register: (username: string, password: string, telephone: string, authCode: string) =>
@@ -32,6 +51,8 @@ export interface SeckillSessionDetail {
 }
 
 export const seckillApi = {
+  // GET /seckill/sessions：取秒杀活动与场次列表。注意场次的开始、结束时间是 HH:mm:ss 字符串
+  // （不是时间戳），页面 SeckillView 会自己按冒号拆成时分秒再换算比较
   sessions: () => request.get('/seckill/sessions')
 }
 
@@ -45,6 +66,8 @@ export const productApi = {
 
 // ---------- 购物车 /cart ----------
 export const cartApi = {
+  // POST /cart/add：后端不会回查商品表，所以名称、图片、价格、规格这些商品快照要前端一起传，
+  // 否则购物车列表会显示空白。productSkuId 也要给，用来区分同一商品的不同规格
   add: (cartItem: {
     productId: number
     productSkuId: number
@@ -69,6 +92,8 @@ export const orderApi = {
     request.post('/order/generateConfirmOrder', cartIds),
   // 幂等令牌：提交订单前先取，生成订单时通过 X-Order-Token 头携带
   token: () => request.get('/order/token'),
+  // POST /order/generateOrder：下单接口。orderParam 是确认页组装的订单参数，
+  // orderToken 必须放进 X-Order-Token 头（幂等令牌，见 OrderConfirmView），漏带会被后端挡下
   generateOrder: (orderParam: object, orderToken: string) =>
     request.post('/order/generateOrder', orderParam, {
       headers: { 'X-Order-Token': orderToken }

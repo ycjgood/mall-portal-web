@@ -49,6 +49,8 @@
 
     <!-- 页面主体 -->
     <main class="main">
+      <!-- 这里是页面插槽：网址对应哪一页就显示哪一页。
+           另外监听子页面抛来的 cart-changed 自定义事件，一收到就刷新购物车角标 -->
       <router-view @cart-changed="cart.refresh" />
     </main>
 
@@ -63,6 +65,30 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * 【模块职责】整站的外壳：顶部一条导航栏（logo、搜索框、购物车、秒杀入口、我的订单、登录或用户名），
+ * 中间是留给各页面的空位，底部是页脚。用户逛到任何页面都能看到这层外壳。
+ * 类比：像商场的门头和导览台，逛到哪个柜台（页面）都不变。
+ *
+ * 【输入】用户在搜索框输入的关键字（keyword）、点击各按钮的操作，以及子页面抛上来的 cart-changed 事件。
+ * 【输出】按用户操作跳转页面；展示购物车角标；登录时显示用户名、未登录时显示登录与注册按钮；
+ *         本身不直接调后端接口，但会触发 user.fetchInfo() 与 cart.refresh() 两个拉取动作。
+ * 【执行流程】
+ *   1) 打开任意页面，顶栏先渲染；购物车角标读 cart.count。
+ *   2) 输入关键字回车或点放大镜，goSearch() 跳到商品列表页并带上 keyword 参数。
+ *   3) 点退出登录，doLogout() 清用户与购物车状态、回首页。
+ *   4) 页面挂载后如果已登录，补拉一次会员资料和购物车，保证角标准确。
+ * 【关键变量/状态】
+ *   - keyword：搜索框里临时存的字，一回车就带给商品列表页。
+ *   - user：Pinia 用户仓库，决定显示用户名还是登录与注册。
+ *   - cart：Pinia 购物车仓库，提供角标数字 count。
+ *   - router：跳转工具，页面里 $router.push 也是它。
+ * 【注意事项】
+ *   1. router-view 上监听了 cart-changed 自定义事件，一收到就调 cart.refresh()：子页面加购成功后要抛这个事件，
+ *      顶栏角标才会刷新；新写的页面若只调接口不抛事件，角标会不准（也可以直接调 cart.refresh()）。
+ *   2. 只在已登录（user.isLogin）时才去拉购物车，未登录时接口会返回 401，由 request.ts 统一跳登录页。
+ *   3. 顶栏按钮都是前端路由跳转，不直接打接口；需要登录的页面（购物车、订单）由 router 的 auth 守卫先做检查。
+ */
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -75,15 +101,19 @@ const user = useUserStore()
 const cart = useCartStore()
 const keyword = ref('')
 
+// 把搜索框里的字带进网址参数，跳到商品列表页；列表页会读 route.query.keyword 去查后端
 function goSearch() {
   router.push({ path: '/products', query: { keyword: keyword.value } })
 }
+// 退出登录：用户仓库清凭证、购物车仓库清本地缓存（避免下一个人看到上一个人的角标），再回首页
 function doLogout() {
   user.logout()
   cart.clearLocal()
   ElMessage.success('已退出登录')
   router.push('/')
 }
+// 页面外壳显示后，如果已登录就补一次数据：拉会员资料（顶栏显示用户名）和购物车（角标准确）。
+// 未登录时不去请求，避免白白触发 401 跳登录
 onMounted(() => {
   if (user.isLogin) {
     user.fetchInfo()
