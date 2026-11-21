@@ -8,15 +8,20 @@
  * 【执行流程】
  *   1) plugins 里的 vue() 让 Vite 认识 .vue 文件。
  *   2) server.port 设为 5174，特意避开管理后台前端的 5173，两个前端可以同时开着。
- *   3) 代理规则：请求路径以 /api 开头，去掉 /api 前缀后转给 mall-portal 的 8085 端口。
+ *   3) 两组代理规则：
+ *      · /api/xxx  → 去掉 /api 前缀后转给 mall-portal 的 8085（商城所有常规接口）
+ *      · /chat/xxx → 原样转给 mall-chat 的 8086（AI 问答的 SSE 流式接口，不 rewrite）
  * 【关键变量/状态】
  *   - port 5174：C 端商城前端端口。
  *   - target http://localhost:8085：后端 mall-portal 地址。
+ *   - /chat 的 target http://localhost:8086：AI 问答服务 mall-chat 地址。
  *   - rewrite：把 /api/cart/list 改写成 /cart/list，因为后端接口本身不带 /api。
  * 【注意事项】
- *   1. 前端代码里只写 /api/xxx，不要写 localhost:8085；换部署环境时只改这里一处即可。
+ *   1. 前端代码里只写 /api/xxx 或 /chat/xxx，不要写 localhost 主机名；换部署环境时只改这里一处即可。
  *   2. changeOrigin 让后端看到的请求来源像是同源，避免被跨域或来源校验挡住。
- *   3. 后端另有一个 AI 问答服务 mall-chat（8086，SSE 接口 /chat/ask），这份代理没有转发它，前端也尚未接入对话面板。
+ *   3. /chat 这条例外不 rewrite：后端接口路径本身就是 /chat/ask，去掉前缀反而会 404。
+ *      AI 问答用 SSE 长连接，Vite 代理默认支持流式转发，不需要额外配置。
+ *   4. AI 服务 8086 与商城后端 8085 是两个独立服务；AI 挂了只影响悬浮窗，不影响下单。
  */
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -27,14 +32,20 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5174,
-    // 代理（转发）：前端一律请求 /api/xxx，这里把 /api 去掉后转给后端 8085，
-    // 好处是前端代码里不写后端地址，也绕开浏览器跨域限制
+// 代理（转发）：前端一律请求 /api/xxx 或 /chat/xxx，由这里转到不同后端，
+// 好处是前端代码里不写后端地址，也绕开浏览器跨域限制
     proxy: {
       // 只拦截 /api 开头的请求；target 是后端 mall-portal 的 8085 端口
       '/api': {
         target: 'http://localhost:8085',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, '')
+      },
+      // AI 问答：mall-chat 的 8086 端口。后端接口本来就叫 /chat/ask，
+      // 所以不做 rewrite；SSE 是长连接流式响应，代理会原样把数据一段段转回来
+      '/chat': {
+        target: 'http://localhost:8086',
+        changeOrigin: true
       }
     }
   }

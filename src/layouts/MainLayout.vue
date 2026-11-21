@@ -61,6 +61,10 @@
         <p class="tip">订单超时未付款将由延迟消息自动取消 · 库存支持高并发防超卖</p>
       </div>
     </footer>
+
+    <!-- AI 智能客服悬浮窗：放在外壳里，所以逛到任何页面右下角都有「问小智」。
+         它是独立的 8086 服务，挂了也不影响这里的顶栏、搜索和下单 -->
+    <ChatWidget />
   </div>
 </template>
 
@@ -72,12 +76,14 @@
  *
  * 【输入】用户在搜索框输入的关键字（keyword）、点击各按钮的操作，以及子页面抛上来的 cart-changed 事件。
  * 【输出】按用户操作跳转页面；展示购物车角标；登录时显示用户名、未登录时显示登录与注册按钮；
- *         本身不直接调后端接口，但会触发 user.fetchInfo() 与 cart.refresh() 两个拉取动作。
+ *         本身不直接调后端接口，但会触发 user.fetchInfo() 与 cart.refresh() 两个拉取动作；
+ *         另外挂载一个全站可见的 AI 客服悬浮窗 ChatWidget（独立走 8086 的 SSE 问答）。
  * 【执行流程】
  *   1) 打开任意页面，顶栏先渲染；购物车角标读 cart.count。
  *   2) 输入关键字回车或点放大镜，goSearch() 跳到商品列表页并带上 keyword 参数。
  *   3) 点退出登录，doLogout() 清用户与购物车状态、回首页。
  *   4) 页面挂载后如果已登录，补拉一次会员资料和购物车，保证角标准确。
+ *   5) 右下角的 ChatWidget 由这里统一挂载，顾客点「问小智」即可问商品参数。
  * 【关键变量/状态】
  *   - keyword：搜索框里临时存的字，一回车就带给商品列表页。
  *   - user：Pinia 用户仓库，决定显示用户名还是登录与注册。
@@ -95,6 +101,8 @@ import { ElMessage } from 'element-plus'
 import { Search, ShoppingCart, User } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { useCartStore } from '../stores/cart'
+// AI 客服悬浮窗：全站只需要挂一次，就放在外壳里；它的请求走 /chat 代理到 8086，不走 /api
+import ChatWidget from '../components/ChatWidget.vue'
 
 const router = useRouter()
 const user = useUserStore()

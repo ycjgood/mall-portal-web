@@ -16,6 +16,7 @@
  *   4. 购物车批量接口（list/promotion、delete）的 id 数组要用逗号拼成字符串传，不是直接发 JSON 数组。
  */
 // 各模块接口定义：与 mall-portal 的 Controller 一一对应
+// ★ 例外：AI 智能问答是 SSE 流式长连接，不能用这里的 axios，见 ./chat.ts（走 /chat 代理到 8086）
 import request from './request'
 
 // ---------- 会员 /sso ----------
