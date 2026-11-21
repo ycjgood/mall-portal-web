@@ -2,8 +2,8 @@
   <div class="container cart-page">
     <h2 class="page-title">我的购物车</h2>
 
-    <el-table :data="items" v-loading="loading" style="width: 100%" v-if="items.length">
-      <el-table-column type="selection" width="50" @selection-change="onSelect" ref="tableRef" />
+    <el-table :data="items" v-loading="loading" style="width: 100%" v-if="items.length" @selection-change="onSelect">
+      <el-table-column type="selection" width="50" />
       <el-table-column label="商品" min-width="380">
         <template #default="{ row }">
           <div class="item-info">
